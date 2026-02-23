@@ -1,0 +1,26 @@
+# STM32CubeIDE/Eclipse/C/C++ Build Artifacts
+Debug/
+Release/
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+*.o
+*.d
+*.su
+*.cyclo
+
+# Local IDE Settings
+.settings/
+*.launch
+
+# Temporary/Backup Files
+*.bak
+*~
+*.tmp
+*.log
+
+# System Files
+.DS_Store
+Thumbs.db
