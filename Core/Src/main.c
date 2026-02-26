@@ -24,6 +24,9 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <math.h>
+#include "audio_engine.h"
+#include "keyboard_matrix.h"
+
 #ifndef M_PI
   #define M_PI 3.14159265358979323846
 #endif
@@ -36,10 +39,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define SINE_SAMPLES 256
-#define MAX_VOICES 8
-#define AUDIO_BUF_SIZE 512
-#define SAMPLING_RATE 48000
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -82,118 +82,35 @@ UART_HandleTypeDef huart3;
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 /* USER CODE BEGIN PV */
-int16_t sine_wave[SINE_SAMPLES];
-
 // Force pusher and buffer into SRAM to avoid DTCM (which DMA cannot access)
 uint8_t dtcm_pusher[128 * 1024] __attribute__((section(".data")));
 uint16_t audio_buffer[AUDIO_BUF_SIZE] __attribute__((section(".data"))); 
 
 volatile uint32_t dac_callback_count = 0;
-
-// Correct Matrix to MIDI Note Mapping for AKAI MPK mini MK3
-// Based on discovery log pressing Left to Right.
-// Note: 0 means no key assigned.
-const uint8_t note_map[8][8] = {
-    {62, 63, 56, 57, 50, 51,  0,  0}, // Row 0 (S1)
-    {62, 63, 56, 57, 50, 51,  0,  0}, // Row 1 (S2)
-    {64, 65, 58, 59, 52, 53,  0,  0}, // Row 2 (S1)
-    {64, 65, 58, 59, 52, 53,  0,  0}, // Row 3 (S2)
-    {66, 67, 60, 61, 54, 55, 48, 49}, // Row 4 (S1)
-    {66, 67, 60, 61, 54, 55, 48, 49}, // Row 5 (S2)
-    {72,  0, 70, 71, 68, 69,  0,  0}, // Row 6 (S1)
-    {72,  0, 70, 71, 68, 69,  0,  0}  // Row 7 (S2)
-};
-
-typedef struct {
-    uint8_t active;
-    float phase;
-    float phase_step;
-    float amplitude;      // Current amplitude (0.0 to 1.0)
-    uint8_t row;
-    uint8_t col;
-} Voice;
-
-Voice voices[MAX_VOICES];
-uint32_t s1_timestamp[4][8] = {0}; // Add S1 timing for Velocity
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
-// static void MX_ETH_Init(void); // Conflict with PE0, PE1
 static void MX_USART3_UART_Init(void);
-// static void MX_USB_OTG_FS_PCD_Init(void); // Potential conflicts
 static void MX_DAC_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_I2S2_Init(void);
 /* USER CODE BEGIN PFP */
-void Prepare_Sine_Wave(void);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void Prepare_Sine_Wave(void) {
-  for (int i = 0; i < SINE_SAMPLES; i++) {
-    float angle = i * 2.0f * (float)M_PI / SINE_SAMPLES;
-    // Additive synthesis: Fundamental + 2nd Harmonic + 3rd Harmonic + 4th Harmonic
-    // Piano has many overtones.
-    float sample = sinf(angle)
-                 + 0.5f * sinf(2.0f * angle)
-                 + 0.25f * sinf(3.0f * angle)
-                 + 0.125f * sinf(4.0f * angle);
-
-    // Normalize and scale to signed 16-bit (-16383 to 16383)
-    // The sum of 1 + 0.5 + 0.25 + 0.125 = 1.875, so we divide by ~2.0 to be safe.
-    sine_wave[i] = (int16_t)(sample / 2.0f * 16383.0f);
-  }
-}
-
-void Update_Audio_Buffer(uint32_t start_idx, uint32_t size) {
-    dac_callback_count++;
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0); // LD1 Green
-
-    // Check Blue User Button (PC13)
-    uint8_t test_mode = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
-    if (test_mode) HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
-    else HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
-
-    static uint32_t square_phase = 0;
-
-    for (uint32_t i = 0; i < size; i += 2) {
-        if (test_mode) {
-            int16_t val = (square_phase < 24) ? 15000 : -15000;
-            audio_buffer[start_idx + i] = (uint16_t)val;
-            audio_buffer[start_idx + i + 1] = (uint16_t)val;
-            square_phase = (square_phase + 1) % 48;
-        } else {
-            float mix = 0;
-            for (int v = 0; v < MAX_VOICES; v++) {
-                if (voices[v].active) {
-                    mix += (float)sine_wave[(int)voices[v].phase] * voices[v].amplitude;
-                    
-                    voices[v].phase += voices[v].phase_step;
-                    if (voices[v].phase >= SINE_SAMPLES) voices[v].phase -= SINE_SAMPLES;
-                    
-                    // Slower decay for testing: 0.99998f
-                    voices[v].amplitude *= 0.99998f;
-                    if (voices[v].amplitude < 0.005f) voices[v].active = 0;
-                }
-            }
-            // Increase Gain: Divide by 2 instead of MAX_VOICES
-            int16_t sample = (int16_t)(mix / 2.0f);
-            audio_buffer[start_idx + i] = (uint16_t)sample;
-            audio_buffer[start_idx + i + 1] = (uint16_t)sample;
-        }
-    }
-}
-
 void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *hi2s) {
-    Update_Audio_Buffer(0, AUDIO_BUF_SIZE / 2);
+    AudioEngine_Process(audio_buffer, 0, AUDIO_BUF_SIZE / 2);
+    dac_callback_count++;
 }
 
 void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s) {
-    Update_Audio_Buffer(AUDIO_BUF_SIZE / 2, AUDIO_BUF_SIZE / 2);
+    AudioEngine_Process(audio_buffer, AUDIO_BUF_SIZE / 2, AUDIO_BUF_SIZE / 2);
+    dac_callback_count++;
 }
 /* USER CODE END 0 */
 
@@ -214,10 +131,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-  // Enable DWT Cycle Counter for high-resolution timing
-  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-  DWT->CYCCNT = 0;
-  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -243,24 +157,15 @@ int main(void)
   int len = sprintf(msg, "Audio Buffer Address: 0x%08X\r\n", (unsigned int)audio_buffer);
   HAL_UART_Transmit(&huart3, (uint8_t*)msg, len, 100);
 
-  Prepare_Sine_Wave();
+  AudioEngine_Init();
+  Keyboard_Init();
   
-  // Verify Sine Table is not all zeros
-  len = sprintf(msg, "Sine Table Debug: %d, %d, %d, %d, %d\r\n", 
-                sine_wave[0], sine_wave[1], sine_wave[2], sine_wave[3], sine_wave[4]);
-  HAL_UART_Transmit(&huart3, (uint8_t*)msg, len, 100);
-
-  // Initialize voices
-  for(int v=0; v<MAX_VOICES; v++) voices[v].active = 0;
   for(int b=0; b<AUDIO_BUF_SIZE; b++) audio_buffer[b] = 0;
 
   // Start I2S DMA
   HAL_I2S_Transmit_DMA(&hi2s2, (uint16_t*)audio_buffer, AUDIO_BUF_SIZE);
   
-  HAL_UART_Transmit(&huart3, (uint8_t*)"--- Project Piano Ready with Velocity ---\r\n", 43, 100);
-  
-  uint8_t key_state[8][8] = {0};
-  uint8_t active_keys = 0;
+  HAL_UART_Transmit(&huart3, (uint8_t*)"--- Project Piano (Modular) Ready ---\r\n", 40, 100);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -270,87 +175,14 @@ int main(void)
   {
     // Every 5 seconds, print detailed diagnostic status
     if (HAL_GetTick() - last_debug > 5000) {
-        int d_state = (hi2s2.hdmatx != NULL) ? (int)HAL_DMA_GetState(hi2s2.hdmatx) : -1;
-        uint32_t d_err = (hi2s2.hdmatx != NULL) ? hi2s2.hdmatx->ErrorCode : 0;
-
-        int len = sprintf(msg, "Callbacks: %lu | Voices Active: %d | I2S State: %d\r\n", 
-                          dac_callback_count, active_keys, (int)HAL_I2S_GetState(&hi2s2));
+        int len = sprintf(msg, "Callbacks: %lu | I2S State: %d\r\n", 
+                          dac_callback_count, (int)HAL_I2S_GetState(&hi2s2));
         HAL_UART_Transmit(&huart3, (uint8_t*)msg, len, 100);
         last_debug = HAL_GetTick();
     }
 
-    for (int r = 0; r < 8; r++)
-    {
-      HAL_GPIO_WritePin(GPIOE, (uint16_t)(1 << r), GPIO_PIN_SET);
-      HAL_Delay(1); // Stabilization delay for Ribbon Cable
-
-      for (int c = 0; c < 8; c++)
-      {
-        GPIO_PinState state = HAL_GPIO_ReadPin(GPIOF, (uint16_t)(1 << c));
-
-        if (state == GPIO_PIN_SET && key_state[r][c] == 0)
-        {
-          key_state[r][c] = 1;
-          
-          uint8_t midi_note = note_map[r][c];
-          if (midi_note == 0) continue;
-
-          if (r % 2 == 0) { // S1 (Even Rows) - Record Start Time
-            s1_timestamp[r/2][c] = DWT->CYCCNT;
-          } else { // S2 (Odd Rows) - Calculate Velocity and Trigger Note
-            uint32_t current_time = DWT->CYCCNT;
-            uint32_t dt = current_time - s1_timestamp[r/2][c];
-            
-            // Convert cycles to ms: SystemClock is 216MHz
-            float ms = (float)dt / 216000.0f;
-            
-            // Velocity Mapping: < 5ms = 127, > 50ms = 1
-            int vel = 127 - (int)((ms - 5.0f) * (126.0f / 45.0f));
-            if (vel > 127) vel = 127;
-            if (vel < 1) vel = 1;
-
-            active_keys++;
-            // Find a free voice
-            for (int v = 0; v < MAX_VOICES; v++) {
-              if (!voices[v].active) {
-                  voices[v].active = 1;
-                  voices[v].amplitude = (float)vel / 127.0f; // Velocity scales amplitude
-                  voices[v].row = r;
-                  voices[v].col = c;
-                  voices[v].phase = 0;
-                  
-                  // MIDI Note to Frequency: f = 440 * 2^((n-69)/12)
-                  float freq = 440.0f * powf(2.0f, (midi_note - 69.0f) / 12.0f);
-                  voices[v].phase_step = (freq * SINE_SAMPLES) / SAMPLING_RATE;
-
-                  int len = sprintf(msg, "[Key On] Note:%d Vel:%d dT:%.2fms\r\n", midi_note, vel, ms);
-                  HAL_UART_Transmit(&huart3, (uint8_t*)msg, len, 50);
-                  break;
-              }
-            }
-          }
-        }
-        else if (state == GPIO_PIN_RESET && key_state[r][c] == 1)
-        {
-          key_state[r][c] = 0;
-          
-          if (r % 2 == 1) // S2 Release
-          {
-            uint8_t midi_note = note_map[r][c];
-            if (active_keys > 0) active_keys--;
-
-            for (int v = 0; v < MAX_VOICES; v++) {
-              if (voices[v].active && voices[v].row == r && voices[v].col == c) {
-                  voices[v].amplitude *= 0.1f; // Fast decay on release
-                  break;
-              }
-            }
-          }
-        }
-      }
-      HAL_GPIO_WritePin(GPIOE, (uint16_t)(1 << r), GPIO_PIN_RESET);
-    }
-    HAL_Delay(2); // Reduced main loop delay for faster scanning
+    Keyboard_Scan();
+    HAL_Delay(2);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -452,55 +284,6 @@ static void MX_DAC_Init(void)
   /* USER CODE BEGIN DAC_Init 2 */
 
   /* USER CODE END DAC_Init 2 */
-
-}
-
-/**
-  * @brief ETH Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_ETH_Init(void)
-{
-
-  /* USER CODE BEGIN ETH_Init 0 */
-
-  /* USER CODE END ETH_Init 0 */
-
-   static uint8_t MACAddr[6];
-
-  /* USER CODE BEGIN ETH_Init 1 */
-
-  /* USER CODE END ETH_Init 1 */
-  heth.Instance = ETH;
-  MACAddr[0] = 0x00;
-  MACAddr[1] = 0x80;
-  MACAddr[2] = 0xE1;
-  MACAddr[3] = 0x00;
-  MACAddr[4] = 0x00;
-  MACAddr[5] = 0x00;
-  heth.Init.MACAddr = &MACAddr[0];
-  heth.Init.MediaInterface = HAL_ETH_RMII_MODE;
-  heth.Init.TxDesc = DMATxDscrTab;
-  heth.Init.RxDesc = DMARxDscrTab;
-  heth.Init.RxBuffLen = 1524;
-
-  /* USER CODE BEGIN MACADDRESS */
-
-  /* USER CODE END MACADDRESS */
-
-  if (HAL_ETH_Init(&heth) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  memset(&TxConfig, 0 , sizeof(ETH_TxPacketConfig));
-  TxConfig.Attributes = ETH_TX_PACKETS_FEATURES_CSUM | ETH_TX_PACKETS_FEATURES_CRCPAD;
-  TxConfig.ChecksumCtrl = ETH_CHECKSUM_IPHDR_PAYLOAD_INSERT_PHDR_CALC;
-  TxConfig.CRCPadCtrl = ETH_CRC_PAD_INSERT;
-  /* USER CODE BEGIN ETH_Init 2 */
-
-  /* USER CODE END ETH_Init 2 */
 
 }
 
@@ -607,41 +390,6 @@ static void MX_USART3_UART_Init(void)
   /* USER CODE BEGIN USART3_Init 2 */
 
   /* USER CODE END USART3_Init 2 */
-
-}
-
-/**
-  * @brief USB_OTG_FS Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USB_OTG_FS_PCD_Init(void)
-{
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 0 */
-
-  /* USER CODE END USB_OTG_FS_Init 0 */
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 1 */
-
-  /* USER CODE END USB_OTG_FS_Init 1 */
-  hpcd_USB_OTG_FS.Instance = USB_OTG_FS;
-  hpcd_USB_OTG_FS.Init.dev_endpoints = 6;
-  hpcd_USB_OTG_FS.Init.speed = PCD_SPEED_FULL;
-  hpcd_USB_OTG_FS.Init.dma_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.phy_itface = PCD_PHY_EMBEDDED;
-  hpcd_USB_OTG_FS.Init.Sof_enable = ENABLE;
-  hpcd_USB_OTG_FS.Init.low_power_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.lpm_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.vbus_sensing_enable = ENABLE;
-  hpcd_USB_OTG_FS.Init.use_dedicated_ep1 = DISABLE;
-  if (HAL_PCD_Init(&hpcd_USB_OTG_FS) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USB_OTG_FS_Init 2 */
-
-  /* USER CODE END USB_OTG_FS_Init 2 */
 
 }
 
