@@ -1,72 +1,62 @@
-# Project Piano: AKAI MPK mini MK3 x STM32F767
+# Project Piano: AKAI MPK mini MK3 x STM32F767 + ESP32
 
 ## 🎹 Project Overview
-Replacement of the original AKAI controller with an **STM32F767ZIT6** (NUCLEO-F767ZI).
-Goal: Low-latency MIDI controller + Standalone Polyphonic Piano (PCM5102 DAC).
+การเปลี่ยนระบบควบคุมของ AKAI MPK mini MK3 โดยใช้ **STM32F767ZIT6** เป็น Audio Engine (Backend) และ **ESP32** เป็น Input/GUI Controller (Frontend) เชื่อมต่อกันด้วยโปรโตคอล MIDI-over-UART
+
+---
+
+## 🏗 Modular Architecture (Updated V5.8 - Arctic Edition)
+
+### 1. ESP32 (Frontend - Orchestrator)
+- **Dual-Core FreeRTOS:** 
+    - **Core 0 (TaskMIDI):** สแกนคีย์ความเร็วสูง, ประมวลผล MIDI, ระบบ Recording/Playback, และ Bidirectional Heartbeat
+    - **Core 1 (TaskGUI):** จัดการจอภาพ TFT และระบบสัมผัส (Touch) เพื่อไม่ให้ขัดจังหวะการเล่นดนตรี
+- **UI Engine (TFT_eSPI):** 
+    - **Arctic Light Theme:** UI สีขาวมินิมอล พร้อมปุ่มกด 5 ปุ่ม (PNO, ORG, SYN, REC, LIB)
+    - **Smart Overlays:** หน้าจอ Master Volume ขนาดใหญ่ที่จะปรากฏขึ้นเฉพาะตอนปรับค่า และหรี่ไฟ (Dimming) อัตโนมัติเมื่อไม่ได้ใช้งาน
+- **State Management (ArduinoJson):** บันทึกค่าระดับเสียง, เครื่องดนตรีล่าสุด และสถานะระบบลงใน Flash Memory (LittleFS)
+- **File System (StorageManager):** ระบบจัดการคลังเพลง (Library) รองรับการบันทึกหลายไฟล์, การลบไฟล์ และ Media Player ในตัว
+
+### 2. STM32F767 (Backend - Audio Engine)
+- **Multi-Engine Synth:** 16-voice Polyphonic รองรับ 3 โหมดเสียง (Piano, Organ, Synth) เปลี่ยนผ่าน MIDI Program Change
+- **DSP Effects:** ระบบ ADSR Envelope ที่นุ่มนวล และเอฟเฟกต์ **Echo/Delay** เพื่อเพิ่มมิติเสียง
+- **Resilient Comm:** สื่อสารผ่าน **USART2 (PD5/PD6)** พร้อมระบบ **Handshake & Heartbeat** (Auto-Silence เมื่อสายหลุด)
+- **Debug Port:** แยก **USART3 (PD8/PD9)** สำหรับส่ง Log เข้าคอมพิวเตอร์และ Forward ไปยัง ESP32
 
 ---
 
 ## 🛠 Hardware Specifications
+*ดูรายละเอียดฉบับเต็มได้ที่ [PINOUT.md](PINOUT.md)*
 
-### 1. Keyboard Matrix (AKAI Custom)
-- **Matrix:** 8 Rows x 8 Columns (Dual-contact).
-- **Wiring:**
-  - **Even Rows (0, 2, 4, 6):** S1 Contact (First touch).
-  - **Odd Rows (1, 3, 5, 7):** S2 Contact (Bottom touch - Triggers Note On).
-- **Logic:** Note On is triggered ONLY on S2 (Odd Rows) to prevent double triggers.
-
-### 2. Peripheral Pinout (Active)
-
-| Function | Pin(s) | Peripheral | Note |
+| Interface | ESP32 Pins | STM32 Pins | Note |
 | :--- | :--- | :--- | :--- |
-| **I2S BCK** | **PB10** | I2S2_CK | Bit Clock to PCM5102 |
-| **I2S WS** | **PB12** | I2S2_WS | Word Select (LRCK) |
-| **I2S SD** | **PC3** | I2S2_SD | Serial Data (DIN) |
-| **Matrix Rows** | PE0 - PE7 | GPIOE | Output Scan (Very High Speed) |
-| **Matrix Cols** | PF0 - PF7 | GPIOF | Input (Pull-down) |
-| **Debug UART** | PD8, PD9 | USART3 | 115200 bps |
-
----
-
-## 🆘 Troubleshooting & Development Log (Lessons Learned)
-
-### 1. Audio/DMA Issues (STM32F7 Specific)
-- **Problem:** `DMA Callbacks` remained 0 despite correct initialization.
-- **Cause:** **DTCM RAM vs DMA1.** On STM32F7, DMA1 cannot access the DTCM RAM region (starts at `0x20000000`). Global variables are placed there by default.
-- **Solution:** Use a "Pusher" array (128KB) or `__attribute__((section(".data")))` to force the `audio_buffer` into **SRAM1** (starts at `0x20020000`).
-
-### 2. I2S Clock Issue
-- **Problem:** I2S peripheral stuck in Busy/Ready state without requesting DMA.
-- **Cause:** PLLI2S was configured but not assigned to the I2S peripheral.
-- **Solution:** Explicitly set `PeriphClockSelection = RCC_PERIPHCLK_I2S` in `stm32f7xx_hal_msp.c`.
-
-### 3. PCM5102 Hardware Gotchas
-- **XSMT (Soft Mute):** Must be tied to **3.3V**. If left floating or GND, DAC is silent.
-- **SCK:** Must be tied to **GND** to enable Internal PLL mode (since we don't provide MCLK).
-- **GPIO Speed:** I2S pins MUST be set to **Very High Speed** for stable 48kHz audio.
-
-### 4. Matrix Mapping Disorder
-- **Problem:** Keys were out of order and some didn't trigger.
-- **Solution:** Implemented a `note_map[8][8]` lookup table. AKAI's PCB layout is non-linear. The mapping now follows a standard Chromatic Scale starting from C2.
-
----
-
-## 🔊 Audio Engine Specs
-- **Format:** 16-bit Signed Stereo, **48,000 Hz**.
-- **Synthesis:** Additive (Fundamental + 3 Harmonics).
-- **Envelope:** Exponential Decay (Piano release feel).
-- **Polyphony:** 8 Simultaneous Voices.
+| **UART (MIDI)** | TX2(17), RX2(16) | RX2(PD6), TX2(PD5)| Handshake + Heartbeat |
+| **TFT (SPI)** | CS(5), DC(2), RST(4), MOSI(23), SCK(18), MISO(19) | - | Arctic Light UI |
+| **Touch** | T_CS(15), T_CLK(18), T_DIN(23), T_DO(19) | - | 1MHz SPI for stability |
+| **Audio I2S** | - | BCK(PB10), WS(PB12), DIN(PC3) | PCM5102A DAC |
 
 ---
 
 ## 📅 Roadmap & Progress
-- [x] Phase 1: Matrix Discovery.
-- [x] Phase 2: Correct Note Mapping (LUT implemented).
-- [x] Phase 6: Polyphonic Audio Engine (I2S + DMA + Mixer).
-- [x] Phase 7: **Velocity Sensitivity Logic** (Timing S1 to S2).
-- [ ] Phase 8: **GUI Implementation** (ILI9341).
+- [x] Phase 1-7: Matrix Discovery & Basic Audio - *Completed*
+- [x] Phase 8: **Modular Migration & Multi-core Integration**
+  - [x] Arctic Light UI with High-performance TFT_eSPI.
+  - [x] Logarithmic Velocity Curve & 16-voice Polyphony.
+  - [x] Multi-file Recording & Library Manager (Delete/Play).
+  - [x] Persistent Settings via ArduinoJson.
+  - [x] Bidirectional Heartbeat & Safety Auto-Silence.
+  - [x] Modular Code Structure (StorageManager, UI Modules).
+- [ ] Phase 9: **Advanced Sound Design**
+  - [ ] Sound Effects Tuning (Reverb parameters) via UI.
+  - [ ] Support for more MIDI CC commands (Sustain Pedal).
+- [ ] Phase 10: **Standalone Hardware Design**
+  - [ ] 3D Printed Case for Screen and Controls.
+  - [ ] Integrated Power Circuitry.
 
 ---
 
-## 🔗 References
-- [AKAI MPK mini MK3 Matrix Info](https://wave.hatenablog.com/entry/2023/04/16/212100)
+## 🆘 Lessons Learned (Troubleshooting)
+1. **UART Conflict:** ขา PD8/PD9 บน Nucleo ต่อกับ ST-Link ต้องย้ายไป USART2 (PD5/PD6) เพื่อเลี่ยงสัญญาณตีกัน
+2. **SPI Interference:** เมื่อใช้ Touch และ Screen ร่วมกัน ควรต่อสาย MISO และลดความเร็ว Touch Clock (1MHz)
+3. **God Object:** การแยกไฟล์เป็น UI, Screens, และ Storage ช่วยลดความซับซ้อนและแก้ปัญหา Compile Error ได้ดีที่สุด
+4. **Heartbeat:** การส่งสัญญาณชีพ 2 ทางช่วยป้องกันเสียงค้าง (Note Hang) เมื่อสายสัญญาณหลุดได้ดีเยี่ยม
