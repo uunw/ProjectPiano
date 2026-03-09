@@ -16,15 +16,19 @@ typedef struct {
 } ADSR;
 
 static const ADSR ENGINE_ADSR[] = {
-    [ENGINE_PIANO]   = {0.08f, 0.002f, 0.3f, 0.005f}, // Sharp Attack
-    [ENGINE_E_PIANO] = {0.04f, 0.001f, 0.6f, 0.003f}, // Mellow
-    [ENGINE_STRINGS] = {0.001f, 0.0005f, 0.9f, 0.002f} // Very slow build-up
+    [ENGINE_PIANO]   = {0.1f, 0.005f, 0.3f, 0.01f}, 
+    [ENGINE_E_PIANO] = {0.05f, 0.002f, 0.6f, 0.005f},
+    [ENGINE_STRINGS] = {0.002f, 0.001f, 0.9f, 0.002f}
 };
 
+/**
+ * @brief Cubic Soft Clipper (Approximation of tanh)
+ * Input: -1.0 to 1.0, Output: -0.66 to 0.66
+ */
 static float soft_clip(float x) {
-    if (x > 1.0f) return 1.0f;
-    if (x < -1.0f) return -1.0f;
-    return x * (1.5f - 0.5f * x * x);
+    if (x >= 1.0f) return 0.666f;
+    if (x <= -1.0f) return -0.666f;
+    return x - ((x * x * x) * 0.333333f);
 }
 
 void AudioEngine_Init(void) {
@@ -34,15 +38,16 @@ void AudioEngine_Init(void) {
 
 void AudioEngine_NoteOn(uint8_t midi_note, float velocity) {
     Sequencer_RecordEvent(midi_note, velocity, 1);
-    for (int i = 0; i < MAX_VOICES; i++) {
-        if (!voices[i].active || voices[i].env_state == STATE_OFF) {
-            voices[i].midi_note = midi_note;
+    for (int v = 0; v < MAX_VOICES; v++) {
+        if (!voices[v].active || voices[v].env_state == STATE_OFF) {
+            voices[v].midi_note = midi_note;
             float freq = 440.0f * powf(2.0f, (midi_note - 69) / 12.0f);
-            voices[i].phase_step = (freq * SINE_SAMPLES) / SAMPLING_RATE;
-            voices[i].phase = 0; voices[i].amplitude = 0;
-            voices[i].target_amplitude = velocity;
-            voices[i].env_state = STATE_ATTACK;
-            voices[i].active = 1;
+            voices[v].phase_step = (freq * SINE_SAMPLES) / SAMPLING_RATE;
+            voices[v].phase = 0; 
+            voices[v].amplitude = 0;
+            voices[v].target_amplitude = velocity;
+            voices[v].env_state = STATE_ATTACK;
+            voices[v].active = 1;
             return;
         }
     }
@@ -50,8 +55,8 @@ void AudioEngine_NoteOn(uint8_t midi_note, float velocity) {
 
 void AudioEngine_NoteOff(uint8_t midi_note) {
     Sequencer_RecordEvent(midi_note, 0, 0);
-    for (int i = 0; i < MAX_VOICES; i++) {
-        if (voices[i].active && voices[i].midi_note == midi_note) voices[i].env_state = STATE_RELEASE;
+    for (int v = 0; v < MAX_VOICES; v++) {
+        if (voices[v].active && voices[v].midi_note == midi_note) voices[v].env_state = STATE_RELEASE;
     }
 }
 
@@ -59,33 +64,35 @@ void AudioEngine_SetEngine(SoundEngine engine) { current_engine = engine; }
 void AudioEngine_SetVolume(float volume) { master_volume = (volume > 0.8f) ? 0.8f : volume; }
 
 void AudioEngine_Process(uint16_t *buffer, uint32_t start_idx, uint32_t size) {
-    // Current engine is volatile, fetched once per block for consistency
     SoundEngine mode = current_engine;
     ADSR p = ENGINE_ADSR[mode];
+    int16_t *signed_buffer = (int16_t*)buffer; // Use signed pointer for I2S
     
     for (uint32_t i = 0; i < size; i++) {
         float mix = 0;
+        int active_count = 0;
+        
         for (int v = 0; v < MAX_VOICES; v++) {
             if (!voices[v].active) continue;
+            active_count++;
             
             float sample = 0;
             int ph = (int)voices[v].phase;
             
-            // --- WAVE SYNTHESIS PER MODE ---
+            // --- SCALED WAVE SYNTHESIS ---
             if (mode == ENGINE_PIANO) {
-                sample += sine_table[ph % SINE_SAMPLES];
-                sample += 0.4f * sine_table[(ph * 2) % SINE_SAMPLES]; // Brighter
-                sample += 0.2f * sine_table[(ph * 3) % SINE_SAMPLES];
+                sample += sine_table[ph % SINE_SAMPLES] * 0.7f;
+                sample += sine_table[(ph * 2) % SINE_SAMPLES] * 0.2f; // Lower harmonics
+                sample += sine_table[(ph * 3) % SINE_SAMPLES] * 0.1f;
             } else if (mode == ENGINE_E_PIANO) {
-                sample += sine_table[ph % SINE_SAMPLES];
-                sample += 0.3f * sine_table[(ph * 4) % SINE_SAMPLES]; // Bell-like tink
+                sample += sine_table[ph % SINE_SAMPLES] * 0.8f;
+                sample += sine_table[(ph * 4) % SINE_SAMPLES] * 0.2f;
             } else if (mode == ENGINE_STRINGS) {
-                // Approximate a Sawtooth for "Strings" richness
                 sample += (2.0f * (voices[v].phase / SINE_SAMPLES)) - 1.0f;
-                sample *= 0.5f; // Scale down sawtooth
+                sample *= 0.4f; // Scale down Sawtooth
             }
 
-            // --- ADSR LOGIC ---
+            // --- ADSR ---
             switch (voices[v].env_state) {
                 case STATE_ATTACK:
                     voices[v].amplitude += p.attack;
@@ -103,7 +110,11 @@ void AudioEngine_Process(uint16_t *buffer, uint32_t start_idx, uint32_t size) {
                     break;
                 case STATE_RELEASE:
                     voices[v].amplitude -= p.release;
-                    if (voices[v].amplitude <= 0) { voices[v].amplitude = 0; voices[v].env_state = STATE_OFF; voices[v].active = 0; }
+                    if (voices[v].amplitude <= 0) {
+                        voices[v].amplitude = 0;
+                        voices[v].env_state = STATE_OFF;
+                        voices[v].active = 0;
+                    }
                     break;
                 default: break;
             }
@@ -112,8 +123,19 @@ void AudioEngine_Process(uint16_t *buffer, uint32_t start_idx, uint32_t size) {
             voices[v].phase += voices[v].phase_step;
             if (voices[v].phase >= SINE_SAMPLES) voices[v].phase -= SINE_SAMPLES;
         }
-        mix *= master_volume * 0.20f;
-        mix = soft_clip(mix);
-        buffer[start_idx + i] = (uint16_t)((mix + 1.0f) * 32767.0f);
+
+        // --- POLYPHONIC MIXING ---
+        if (active_count > 1) {
+            mix *= 1.0f / sqrtf((float)active_count);
+        }
+        
+        // Final Output Gain (Safe scaling)
+        mix *= master_volume * 0.8f; 
+        
+        // Cubic Saturation
+        float final_sample = soft_clip(mix);
+        
+        // Convert to 16-bit Signed PCM (-32768 to 32767)
+        signed_buffer[start_idx + i] = (int16_t)(final_sample * 32767.0f);
     }
 }

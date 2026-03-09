@@ -43,8 +43,10 @@ void HAL_I2S_TxHalfCpltCallback(I2S_HandleTypeDef *hi2s) { AudioEngine_Process(a
 void HAL_I2S_TxCpltCallback(I2S_HandleTypeDef *hi2s) { AudioEngine_Process(audio_buffer, AUDIO_BUF_SIZE / 2, AUDIO_BUF_SIZE / 2); }
 
 int main(void) {
+  HAL_Init(); // Basic init first
+  HAL_Delay(500); // --- CRITICAL: Wait for power to stabilize ---
+  
   SCB_EnableICache(); 
-  HAL_Init();
   SystemClock_Config();
   
   MX_GPIO_Init();
@@ -54,7 +56,7 @@ int main(void) {
   MX_SPI1_Init();
   MX_ADC1_Init();
 
-  UART_Log("\r\n--- PIANO RECOVERY START ---\r\n");
+  UART_Log("\r\n--- PIANO SYSTEM BOOT ---\r\n");
   
   __HAL_SPI_ENABLE(&hspi1);
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, GPIO_PIN_SET); 
@@ -75,6 +77,10 @@ int main(void) {
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET); 
   Draw_PlayUI(); 
   UART_Log("READY.\r\n");
+
+  // Initialize button state to actual current state before loop to prevent false trigger
+  static uint8_t last_btn_state;
+  last_btn_state = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
 
   while (1) {
     Keyboard_Scan();
@@ -104,6 +110,29 @@ int main(void) {
         last_btn_state = current_btn_state;
     }
     
+    // --- VR (Potentiometer) Volume Control ---
+    static uint32_t last_adc_time = 0;
+    static uint32_t last_adc_val = 0;
+    if (HAL_GetTick() - last_adc_time > 100) {
+        last_adc_time = HAL_GetTick();
+        HAL_ADC_Start(&hadc1);
+        if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK) {
+            uint32_t adc_val = HAL_ADC_GetValue(&hadc1);
+            int32_t diff = (int32_t)adc_val - (int32_t)last_adc_val;
+            
+            // Only update if change is significant (>50) to avoid noise
+            if (diff > 50 || diff < -50) {
+                float new_vol = ((float)adc_val / 4095.0f) * 0.8f;
+                if (new_vol < 0.05f) new_vol = 0.0f;
+                
+                master_volume = new_vol;
+                AudioEngine_SetVolume(new_vol);
+                Draw_VolumeBar(new_vol);
+                last_adc_val = adc_val;
+            }
+        }
+    }
+
     HAL_Delay(1);
   }
 }
