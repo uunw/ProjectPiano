@@ -1,106 +1,90 @@
-# 🎹 Project Piano: Pinout & Wiring Diagram
-เอกสารสรุปการเชื่อมต่อขา (Pinout) ทั้งหมดของระบบ AKAI MPK mini MK3 (Custom Engine)
+# 🎹 Project Piano - Hardware Pinout (V6.1 Standalone - Matrix Edition)
+
+เอกสารระบุการเชื่อมต่อขาสัญญาณทั้งหมดระหว่าง **STM32F767ZIT6 (Nucleo-144)** และอุปกรณ์ต่อพ่วงต่างๆ สำหรับระบบ Standalone Piano Engine
 
 ---
 
-## 1. 📟 ESP32 Controller (Frontend)
-บอร์ดทำหน้าที่สแกน Keyboard Matrix, รับค่า Volume และควบคุมหน้าจอ GUI
+## 📺 1. TFT Display & Touch (ILI9341 SPI)
+ใช้ **Hardware SPI1** ในการสื่อสารข้อมูลภาพและสัมผัส โดยใช้ขาฝั่ง **Outside (แถวนอก)** ของ Morpho Header เป็นหลัก
 
-### 📺 TFT Display (ILI9341 SPI)
-| Function | ESP32 Pin | Note |
-| :--- | :--- | :--- |
-| **VCC** | 3.3V | |
-| **GND** | GND | **Common Ground** |
-| **CS** | GPIO 5 | Chip Select |
-| **RESET** | GPIO 4 | |
-| **DC/RS** | GPIO 2 | Data/Command |
-| **MOSI** | GPIO 23 | Standard SPI MOSI |
-| **SCK** | GPIO 18 | Standard SPI SCK |
-| **LED** | **GPIO 32** | PWM Brightness/Fade Control |
-| **MISO** | GPIO 19 | Shared SPI MISO (for Touch) |
-
-### 🖱️ Touch Screen (Resistive)
-| Function | ESP32 Pin | Note |
-| :--- | :--- | :--- |
-| **T_CS** | **GPIO 15** | Touch Chip Select |
-| **T_CLK** | GPIO 18 | Shared with TFT SCK |
-| **T_DIN** (MOSI) | GPIO 23 | Shared with TFT MOSI |
-| **T_OUT** (MISO) | **GPIO 19** | ต้องต่อเข้า GPIO 19 เพื่ออ่านค่า |
-
-### 🎹 Keyboard Matrix (8x8 Dual-Contact)
-การสแกน Matrix ใช้ **MC14051 (Analog Mux/DeMux)** จำนวน 2 ตัว แบ่งเป็นฝั่ง Row และ Column
-
-#### 1. Row Mux (MC14051 ตัวที่ 1) - จ่ายไฟ (Source)
-| Physical IC Pin | Function | Connect to | Note |
-| :--- | :--- | :--- | :--- |
-| **Pin 16** | VDD | **3.3V** | Power |
-| **Pin 8** | VSS | **GND** | |
-| **Pin 3** | COM | **3.3V** | Source Supply |
-| **Pin 11** | Addr A | **ESP32 GPIO 21** | LSB |
-| **Pin 10** | Addr B | **ESP32 GPIO 13** | |
-| **Pin 9** | Addr C | **ESP32 GPIO 14** | MSB |
-| **Pin 13** | X0 | **Matrix Row 0** | |
-| **Pin 14** | X1 | **Matrix Row 1** | |
-| **Pin 15** | X2 | **Matrix Row 2** | |
-| **Pin 12** | X3 | **Matrix Row 3** | |
-| **Pin 1** | X4 | **Matrix Row 4** | |
-| **Pin 5** | X5 | **Matrix Row 5** | |
-| **Pin 2** | X6 | **Matrix Row 6** | |
-| **Pin 4** | X7 | **Matrix Row 7** | |
-
-#### 2. Column Mux (MC14051 ตัวที่ 2) - อ่านค่า (Read)
-| Physical IC Pin | Function | Connect to | Note |
-| :--- | :--- | :--- | :--- |
-| **Pin 3** | COM | **ESP32 GPIO 33** | Matrix Input Signal |
-| **Pin 11** | Addr A | **ESP32 GPIO 25** | LSB |
-| **Pin 10** | Addr B | **ESP32 GPIO 26** | |
-| **Pin 9** | Addr C | **ESP32 GPIO 27** | MSB |
-| **Pin 13** | X0 | **Matrix Col 0** | |
-| **Pin 14** | X1 | **Matrix Col 1** | |
-| **Pin 15** | X2 | **Matrix Col 2** | |
-| **Pin 12** | X3 | **Matrix Col 3** | |
-| **Pin 1** | X4 | **Matrix Col 4** | |
-| **Pin 5** | X5 | **Matrix Col 5** | |
-| **Pin 2** | X6 | **Matrix Col 6** | |
-| **Pin 4** | X7 | **Matrix Col 7** | |
+| Function | Screen Pin | STM32 Pin | Header Pin | Port Mode | Note |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **VCC** | VCC | 3.3V | CN7-14 (In) | Power | จ่ายไฟ 3.3V |
+| **GND** | GND | GND | CN7-8 (In) | Ground | สายกราวด์ |
+| **CS** | CS | **PD14** | **CN7-16 (Out)** | Output | Chip Select (Screen) |
+| **RESET** | RESET | **PF12** | **CN7-20 (Out)** | Output | Hardware Reset (Active Low) |
+| **DC/RS** | DC/RS | **PD15** | **CN7-18 (Out)** | Output | Data / Command Selection |
+| **SDI (MOSI)**| SDI | **PD7** | **CN9-2 (Out)** | AF5 | SPI1 Master Out Slave In |
+| **SCK** | SCK | **PA5** | **CN7-10 (Out)** | AF5 | SPI1 Clock Signal |
+| **LED** | LED | **PB1** | **CN10-24 (Out)**| Output | Backlight Control (High = On) |
+| **SDO (MISO)**| SDO | **PA6** | **CN7-12 (Out)** | AF5 | SPI1 Master In Slave Out |
+| **T_CS** | T_CS | **PF13** | **CN7-17 (In)** | Output | Chip Select (Touch) |
+| **T_IRQ** | T_IRQ | **PF14** | **CN7-15 (In)** | Input | Touch Interrupt Signal |
 
 ---
 
-## 2. 🎼 STM32F767ZI (Backend Audio Engine)
-บอร์ดทำหน้าที่ประมวลผลเสียง (Polyphonic Synthesis) และส่งออก DAC
+## 🔊 2. Audio DAC (PCM5102A I2S)
+ใช้ **I2S2 (SPI2 Interface)** สำหรับส่งสัญญาณเสียงคุณภาพสูง (48kHz/16-bit Stereo)
 
-### 🔊 I2S Audio Output (PCM5102A DAC Module)
-| PCM5102 Pin | STM32 Pin | Function | Note |
-| :--- | :--- | :--- | :--- |
-| **BCK** | **PB10** | I2S Bit Clock | Serial Clock |
-| **LRCK (LCK)** | **PB12** | I2S Word Select | Left/Right Clock (WS) |
-| **DIN** | **PC3** | I2S Data Out | Serial Audio Data |
-| **GND** | GND | Ground | **Common GND** |
-| **VIN** | 5V | Power | จ่ายไฟ 5V จากบอร์ด Nucleo |
-
-#### ⚙️ Hardware Config (บนโมดูล DAC)
-| PCM5102 Pin | Connect to | Purpose | Note |
-| :--- | :--- | :--- | :--- |
-| **SCK (SCL)** | **GND** | Internal PLL | **สำคัญมาก:** ต้องต่อลง GND เพื่อให้ DAC สร้าง Clock เอง |
-| **XMT (Mute)** | **3.3V (High)** | Soft Mute | **สำคัญ:** ต้องเป็น High ถึงจะมีเสียง |
-| **FMT / DMP / FLT**| **GND** | Config Pins | ตั้งค่าเป็น Standard I2S Mode |
-
-### 🚨 Onboard Peripherals (Debug)
-| Function | STM32 Pin | Color | Note |
-| :--- | :--- | :--- | :--- |
-| **LD1** | PB0 | Green | Power / Status |
-| **LD2** | PB7 | Blue | MIDI Activity |
-| **LD3** | PB14 | Red | Error / Overflow |
-| **User Button**| PC13 | Blue | Reset / Calibrate |
+| DAC Pin | Function | STM32 Pin | Header Pin | Port Mode | Note |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **VCC** | Power | 5V / 3.3V | CN10-6 / 11 | Power | แนะนำให้ใช้ 5V เพื่อกำลังขับที่ดี |
+| **GND** | Ground | GND | CN10-22 (In) | Ground | สายกราวด์ |
+| **BCK** | Bit Clock | **PB10** | **CN10-32 (Out)**| I2S2_CK | สัญญาณนาฬิกาบิต |
+| **DIN** | Data In | **PC3** | **CN9-5 (In)** | I2S2_SD | ข้อมูลสัญญาณเสียง |
+| **LCK (WS)** | Word Select| **PB12** | **CN7-7 (In)** | I2S2_WS | สัญญาณเลือกช่องเสียง (L/R) |
 
 ---
 
-## 3. 📡 Inter-Board Communication (UART)
-| Connection | ESP32 Pin | STM32 Pin | Protocol | Note |
+## 🎹 3. Piano Key Matrix (8x8 Matrix - Inside Pins Only)
+เชื่อมต่อกับ AKAI MPK mini MK3 Keybed ผ่านขาฝั่ง **Inside (แถวใน)** ของ Morpho Header (ขาเลขคี่) เพื่อให้ตรงกับ Screw Terminal บนบอร์ดเขียว
+
+### 🚥 Rows (Scan Outputs - Driven LOW)
+| Row Index | STM32 Pin | Header Pin | Function | Note |
 | :--- | :--- | :--- | :--- | :--- |
-| **MIDI Out** | **GPIO 17 (TX2)** | **PD6 (RX2)** | USART2 RX | MIDI จาก ESP เข้า STM |
-| **Status In** | **GPIO 16 (RX2)** | **PD5 (TX2)** | USART2 TX | Feedback จาก STM เข้า ESP |
-| **Volume Pot** | **GPIO 34 (Analog)**| - | - | ต่อเข้ากับ ESP32 เท่านั้น |
-| **Common GND**| **GND** | **GND** | **CRITICAL!** | ต้องเชื่อมกราวด์ถึงกันเสมอ |
+| **Row 0** | **PC6** | **CN7-1 (In)** | ROW 0 | S1 (First Contact Point) |
+| **Row 1** | **PB15** | **CN7-3 (In)** | ROW 1 | S2 (Trigger Point for Velocity) |
+| **Row 2** | **PB13** | **CN7-5 (In)** | ROW 2 | S1 |
+| **Row 3** | **PA15** | **CN7-9 (In)** | ROW 3 | S2 |
+| **Row 4** | **PC7** | **CN7-11 (In)** | ROW 4 | S1 |
+| **Row 5** | **PB5** | **CN7-13 (In)** | ROW 5 | S2 |
+| **Row 6** | **PB3** | **CN7-15 (In)** | ROW 6 | S1 |
+| **Row 7** | **PA4** | **CN7-17 (In)** | ROW 7 | S2 |
 
-**Baudrate:** 115200 bps (8N1)
+### 🚦 Columns (Input Sensors - Pull-up enabled)
+| Col Index | STM32 Pin | Header Pin | Function | Note |
+| :--- | :--- | :--- | :--- | :--- |
+| **Col 0** | **PB4** | **CN7-19 (In)** | COL 0 | อ่านสถานะปุ่ม (Active LOW) |
+| **Col 1** | **PC2** | **CN10-9 (In)** | COL 1 | |
+| **Col 2** | **PF4** | **CN10-11 (In)** | COL 2 | |
+| **Col 3** | **PB6** | **CN10-13 (In)** | COL 3 | |
+| **Col 4** | **PB2** | **CN10-15 (In)** | COL 4 | |
+| **Col 5** | **PD13** | **CN10-19 (In)** | COL 5 | |
+| **Col 6** | **PD12** | **CN10-21 (In)** | COL 6 | |
+| **Col 7** | **PD11** | **CN10-23 (In)** | COL 7 | |
+
+---
+
+## 🎛️ 4. Analog Controls & UI Buttons
+ส่วนควบคุมเสริมและการตั้งค่า
+
+| Control | STM32 Pin | Header Pin | Function | Note |
+| :--- | :--- | :--- | :--- | :--- |
+| **Master VR** | **PA3 (A1)** | **CN9-1 (In)** | ADC1_IN3 | โวลุ่มปรับระดับเสียงหลัก (0-3.3V) |
+| **User Button**| **PC13** | Onboard | Input | ปุ่มสีน้ำเงินบนบอร์ด (ใช้ Calibrate) |
+| **Reset** | NRST | CN7-4 | Reset | ปุ่ม Reset สีดำบนบอร์ด |
+
+---
+
+## 💻 5. Debug Console (UART)
+สำหรับการดู Log ผ่าน Computer (Serial Monitor)
+
+| Function | STM32 Pin | Baud Rate | Note |
+| :--- | :--- | :--- | :--- |
+| **Debug TX** | **PD8** | 115200 | ผ่าน USB ST-Link (Virtual COM Port) |
+| **Debug RX** | **PD9** | 115200 | ผ่าน USB ST-Link (Virtual COM Port) |
+
+---
+**ข้อควรระวัง:** 
+1. ขา **PB12 (CN7-7)** และ **PC3 (CN9-5)** ต้องเว้นไว้เพื่อระบบเสียง ห้ามนำไปใช้สแกนคีย์บอร์ด
+2. การต่อสาย Matrix แนะนำให้ใช้สายแพที่สั้นที่สุดเพื่อลด Noise ในการอ่านค่า Velocity

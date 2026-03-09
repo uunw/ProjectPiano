@@ -1,62 +1,56 @@
-# Project Piano: AKAI MPK mini MK3 x STM32F767 + ESP32
+# Project Piano: AKAI MPK mini MK3 x STM32F767 (Standalone)
 
 ## 🎹 Project Overview
-การเปลี่ยนระบบควบคุมของ AKAI MPK mini MK3 โดยใช้ **STM32F767ZIT6** เป็น Audio Engine (Backend) และ **ESP32** เป็น Input/GUI Controller (Frontend) เชื่อมต่อกันด้วยโปรโตคอล MIDI-over-UART
+การพัฒนาระบบควบคุมและ Audio Engine สำหรับ AKAI MPK mini MK3 โดยใช้ **STM32F767ZIT6** เพียงตัวเดียวเป็นทั้ง Input Controller, GUI Orchestrator และ Audio Engine เชื่อมต่อกับจอ ILI9341 ผ่าน Hardware SPI
 
 ---
 
-## 🏗 Modular Architecture (Updated V5.8 - Arctic Edition)
+## 🏗 Modular Architecture (Updated V6.0 - Standalone Edition)
 
-### 1. ESP32 (Frontend - Orchestrator)
-- **Dual-Core FreeRTOS:** 
-    - **Core 0 (TaskMIDI):** สแกนคีย์ความเร็วสูง, ประมวลผล MIDI, ระบบ Recording/Playback, และ Bidirectional Heartbeat
-    - **Core 1 (TaskGUI):** จัดการจอภาพ TFT และระบบสัมผัส (Touch) เพื่อไม่ให้ขัดจังหวะการเล่นดนตรี
-- **UI Engine (TFT_eSPI):** 
-    - **Arctic Light Theme:** UI สีขาวมินิมอล พร้อมปุ่มกด 5 ปุ่ม (PNO, ORG, SYN, REC, LIB)
-    - **Smart Overlays:** หน้าจอ Master Volume ขนาดใหญ่ที่จะปรากฏขึ้นเฉพาะตอนปรับค่า และหรี่ไฟ (Dimming) อัตโนมัติเมื่อไม่ได้ใช้งาน
-- **State Management (ArduinoJson):** บันทึกค่าระดับเสียง, เครื่องดนตรีล่าสุด และสถานะระบบลงใน Flash Memory (LittleFS)
-- **File System (StorageManager):** ระบบจัดการคลังเพลง (Library) รองรับการบันทึกหลายไฟล์, การลบไฟล์ และ Media Player ในตัว
+### 1. STM32F767 (The All-in-One Engine)
+- **High-Performance Audio:** 16-voice Polyphonic, 48kHz/16-bit I2S DMA Output (PCM5102A).
+- **Hardware Graphics Acceleration:** 
+    - ใช้งาน **Hardware SPI1** วิ่งที่ความเร็วสูงสุด 27MHz.
+    - ใช้ **Direct Register Access (BSRR)** สำหรับการคุมขา CS/DC เพื่อลด Overhead.
+    - ระบบ Font รองรับตัวพิมพ์ใหญ่ (A-Z) และตัวเลข.
+- **Real-time Scanning:** สแกนปุ่มกดเปียโนโดยตรงผ่านขา PE (GPIO Input Pull-up) พร้อมระบบหลบหลีกขา Ethernet.
 
-### 2. STM32F767 (Backend - Audio Engine)
-- **Multi-Engine Synth:** 16-voice Polyphonic รองรับ 3 โหมดเสียง (Piano, Organ, Synth) เปลี่ยนผ่าน MIDI Program Change
-- **DSP Effects:** ระบบ ADSR Envelope ที่นุ่มนวล และเอฟเฟกต์ **Echo/Delay** เพื่อเพิ่มมิติเสียง
-- **Resilient Comm:** สื่อสารผ่าน **USART2 (PD5/PD6)** พร้อมระบบ **Handshake & Heartbeat** (Auto-Silence เมื่อสายหลุด)
-- **Debug Port:** แยก **USART3 (PD8/PD9)** สำหรับส่ง Log เข้าคอมพิวเตอร์และ Forward ไปยัง ESP32
+### 2. UI System (Arctic Light Theme)
+- **Landscape Mode:** แสดงผลแนวนอน 320x240 (Rotation 0x28).
+- **Gamma Correction:** ใช้ค่าเฉพาะเจาะจงเพื่อให้สีสันคมชัดและไม่มีเส้นกวนบนจอ ILI9341.
+- **Visual Feedback:** แสดงชื่อโน้ตที่กดล่าสุดและระดับเสียง (Master Volume) แบบเรียลไทม์.
 
 ---
 
-## 🛠 Hardware Specifications
-*ดูรายละเอียดฉบับเต็มได้ที่ [PINOUT.md](PINOUT.md)*
+## ⚠️ Strict Mandates (กฎเหล็กในการพัฒนา)
 
-| Interface | ESP32 Pins | STM32 Pins | Note |
-| :--- | :--- | :--- | :--- |
-| **UART (MIDI)** | TX2(17), RX2(16) | RX2(PD6), TX2(PD5)| Handshake + Heartbeat |
-| **TFT (SPI)** | CS(5), DC(2), RST(4), MOSI(23), SCK(18), MISO(19) | - | Arctic Light UI |
-| **Touch** | T_CS(15), T_CLK(18), T_DIN(23), T_DO(19) | - | 1MHz SPI for stability |
-| **Audio I2S** | - | BCK(PB10), WS(PB12), DIN(PC3) | PCM5102A DAC |
+1. **Pin Configuration:**
+    - **ห้ามเอเยนต์แก้ไข** Pin Software Defines, Macros ควบคุมขา หรือรายการใน `PIANO_PINS` โดยพลการ
+    - การกำหนดขา (Hardware Mapping) ทั้งหมดต้องทำผ่าน `.ioc` หรือ User เป็นคนสั่งเท่านั้น
+2. **STM32F7 SPI Standards:**
+    - ต้องใช้ **Byte-access** (`*(__IO uint8_t *)&SPIx->DR`) สำหรับการส่งข้อมูล 8 บิตเสมอ
+    - ต้องตั้งค่า **FIFO Threshold (FRXTH)** เป็นระดับ Byte เพื่อป้องกันข้อมูลผิดพลาด
+3. **UI Strings:**
+    - ข้อความที่แสดงบนจอต้องเป็น **ตัวพิมพ์ใหญ่ (UPPERCASE)** เท่านั้น เนื่องจากข้อจำกัดของ Font Engine ปัจจุบัน
 
 ---
 
 ## 📅 Roadmap & Progress
-- [x] Phase 1-7: Matrix Discovery & Basic Audio - *Completed*
-- [x] Phase 8: **Modular Migration & Multi-core Integration**
-  - [x] Arctic Light UI with High-performance TFT_eSPI.
-  - [x] Logarithmic Velocity Curve & 16-voice Polyphony.
-  - [x] Multi-file Recording & Library Manager (Delete/Play).
-  - [x] Persistent Settings via ArduinoJson.
-  - [x] Bidirectional Heartbeat & Safety Auto-Silence.
-  - [x] Modular Code Structure (StorageManager, UI Modules).
-- [ ] Phase 9: **Advanced Sound Design**
-  - [ ] Sound Effects Tuning (Reverb parameters) via UI.
-  - [ ] Support for more MIDI CC commands (Sustain Pedal).
-- [ ] Phase 10: **Standalone Hardware Design**
-  - [ ] 3D Printed Case for Screen and Controls.
-  - [ ] Integrated Power Circuitry.
+- [x] Phase 1-8: Matrix Discovery & Multi-core (Legacy).
+- [x] Phase 9: **Standalone STM32 Migration**
+    - [x] ย้าย Logic ทั้งหมดจาก ESP32 มาลง STM32F7.
+    - [x] ตั้งค่า Hardware SPI1 พร้อมความเร็ว 27MHz.
+    - [x] แก้ไขปัญหา "จอขาว" และ "เส้นกวน" ด้วย Gamma Tuning.
+- [ ] Phase 10: **Advanced Sound & Library (In Progress)**
+    - [x] [dq6] **Touchscreen Integration (XPT2046):** รองรับการกดปุ่มบนหน้าจอ (4-Point Calibrated).
+    - [x] [cxs] **SPI Speed Optimization:** ปรับจูนความเร็วที่ 6.75MHz เพื่อความเสถียรของ Touch.
+    - [x] **Master Volume Control:** ปรับเสียงได้ทั้งผ่าน Touch (Slide) และ VR (ADC PA3).
+    - [ ] [dcr] **Advanced Audio Effects:** เพิ่ม Reverb และ Echo.
+    - [ ] [714] **Library Management:** ระบบบันทึกเพลง (MIDI) ลง Flash/SD.
 
 ---
 
-## 🆘 Lessons Learned (Troubleshooting)
-1. **UART Conflict:** ขา PD8/PD9 บน Nucleo ต่อกับ ST-Link ต้องย้ายไป USART2 (PD5/PD6) เพื่อเลี่ยงสัญญาณตีกัน
-2. **SPI Interference:** เมื่อใช้ Touch และ Screen ร่วมกัน ควรต่อสาย MISO และลดความเร็ว Touch Clock (1MHz)
-3. **God Object:** การแยกไฟล์เป็น UI, Screens, และ Storage ช่วยลดความซับซ้อนและแก้ปัญหา Compile Error ได้ดีที่สุด
-4. **Heartbeat:** การส่งสัญญาณชีพ 2 ทางช่วยป้องกันเสียงค้าง (Note Hang) เมื่อสายสัญญาณหลุดได้ดีเยี่ยม
+## 🆘 Troubleshooting (Technical Lessons)
+1. **White Screen:** เกิดจาก SPI FIFO ไม่ได้ถูกตั้งเป็น Byte-level (FRXTH) หรือการส่งข้อมูลเป็น 16-bit โดยไม่ตั้งใจ
+2. **Horizontal Lines:** แก้ไขได้ด้วยการตั้งค่า Gamma Correction (E0, E1) และ Power Control ให้ตรงตามสเปกชิป
+3. **MISO Failure:** หากอ่าน ID ได้ 0x00 หรือ 0xFF ให้ตรวจสอบสาย SDO และการตั้งค่า MspInit ของพอร์ต GPIO

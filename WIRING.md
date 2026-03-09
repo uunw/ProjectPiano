@@ -89,7 +89,7 @@ graph TD
 | **GND** | **GND** | |
 | **CS** | GPIO 5 | |
 | **RESET** | GPIO 4 | |
-| **DC/RS** | GPIO 2 | |
+| **DC/RS** | GPIO 22 | |
 | **MOSI** | GPIO 23 | |
 | **SCK** | GPIO 18 | |
 | **LED** | GPIO 32 | PWM Dimming |

@@ -18,8 +18,8 @@ typedef enum {
 
 typedef enum {
     ENGINE_PIANO,
-    ENGINE_ORGAN,
-    ENGINE_SYNTH
+    ENGINE_E_PIANO,
+    ENGINE_STRINGS
 } SoundEngine;
 
 typedef struct {
@@ -38,5 +38,8 @@ void AudioEngine_NoteOn(uint8_t midi_note, float velocity);
 void AudioEngine_NoteOff(uint8_t midi_note);
 void AudioEngine_SetVolume(float volume);
 void AudioEngine_SetEngine(SoundEngine engine);
+
+extern volatile float master_volume;
+extern volatile SoundEngine current_engine;
 
 #endif /* __AUDIO_ENGINE_H */
