@@ -1,56 +1,56 @@
 # Project Piano: AKAI MPK mini MK3 x STM32F767 (Standalone)
 
 ## 🎹 Project Overview
-การพัฒนาระบบควบคุมและ Audio Engine สำหรับ AKAI MPK mini MK3 โดยใช้ **STM32F767ZIT6** เพียงตัวเดียวเป็นทั้ง Input Controller, GUI Orchestrator และ Audio Engine เชื่อมต่อกับจอ ILI9341 ผ่าน Hardware SPI
+การพัฒนาระบบควบคุมและ Audio Engine สำหรับ AKAI MPK mini MK3 โดยใช้ **STM32F767ZIT6** เพียงตัวเดียวเป็นทั้ง Input Controller, GUI Orchestrator และ Audio Engine (Standalone Mode)
 
 ---
 
-## 🏗 Modular Architecture (Updated V6.0 - Standalone Edition)
+## 🏗 Modular Architecture (Updated V6.1 - Matrix Edition)
 
 ### 1. STM32F767 (The All-in-One Engine)
 - **High-Performance Audio:** 16-voice Polyphonic, 48kHz/16-bit I2S DMA Output (PCM5102A).
+- **Audio Mixing:** ใช้ระบบ Cubic Soft Clipping และ Dynamic Headroom Management เพื่อรองรับการเล่น **Chord** โดยเสียงไม่แตก
 - **Hardware Graphics Acceleration:** 
-    - ใช้งาน **Hardware SPI1** วิ่งที่ความเร็วสูงสุด 27MHz.
-    - ใช้ **Direct Register Access (BSRR)** สำหรับการคุมขา CS/DC เพื่อลด Overhead.
-    - ระบบ Font รองรับตัวพิมพ์ใหญ่ (A-Z) และตัวเลข.
-- **Real-time Scanning:** สแกนปุ่มกดเปียโนโดยตรงผ่านขา PE (GPIO Input Pull-up) พร้อมระบบหลบหลีกขา Ethernet.
+    - ใช้งาน **Hardware SPI1** วิ่งที่ความเร็ว 6.75MHz (Prescaler 32) เพื่อความเสถียรของ Touch.
+- **8x8 Matrix Scanning:** สแกนปุ่มกดเปียโนโดยตรงผ่านขา Morpho **Inside Pins** (แถวใน) พร้อมระบบคำนวณ **Velocity** (S1/S2 contacts).
 
-### 2. UI System (Arctic Light Theme)
-- **Landscape Mode:** แสดงผลแนวนอน 320x240 (Rotation 0x28).
-- **Gamma Correction:** ใช้ค่าเฉพาะเจาะจงเพื่อให้สีสันคมชัดและไม่มีเส้นกวนบนจอ ILI9341.
-- **Visual Feedback:** แสดงชื่อโน้ตที่กดล่าสุดและระดับเสียง (Master Volume) แบบเรียลไทม์.
+### 2. Feature Stack
+- **Sound Engines:** 3 โหมดเสียง (GRAND PIANO, E-PIANO, STRINGS) เปลี่ยนได้ผ่าน Touchscreen.
+- **Sequencer & Library:** บันทึกโน้ตเพลงได้ 4 Slots (สูงสุด 2,000 events ต่อเพลง) พร้อมระบบ **Persistent Storage** เซฟลง Flash Memory (Sector 11) อัตโนมัติ.
+- **MP3-style Player:** หน้าจอเครื่องเล่นเพลงพร้อม Progress Bar, Play/Pause และ Stop.
+- **Hardware Tester:** ปุ่มสีน้ำเงิน (PC13) สำหรับทดสอบเสียง (Note C4) และ LED สีแดง (LD3) แสดงสถานะ I2S DMA.
 
 ---
 
 ## ⚠️ Strict Mandates (กฎเหล็กในการพัฒนา)
 
 1. **Pin Configuration:**
-    - **ห้ามเอเยนต์แก้ไข** Pin Software Defines, Macros ควบคุมขา หรือรายการใน `PIANO_PINS` โดยพลการ
-    - การกำหนดขา (Hardware Mapping) ทั้งหมดต้องทำผ่าน `.ioc` หรือ User เป็นคนสั่งเท่านั้น
-2. **STM32F7 SPI Standards:**
-    - ต้องใช้ **Byte-access** (`*(__IO uint8_t *)&SPIx->DR`) สำหรับการส่งข้อมูล 8 บิตเสมอ
-    - ต้องตั้งค่า **FIFO Threshold (FRXTH)** เป็นระดับ Byte เพื่อป้องกันข้อมูลผิดพลาด
-3. **UI Strings:**
-    - ข้อความที่แสดงบนจอต้องเป็น **ตัวพิมพ์ใหญ่ (UPPERCASE)** เท่านั้น เนื่องจากข้อจำกัดของ Font Engine ปัจจุบัน
+    - **ห้ามแก้ไข** รายการใน `ROW_PORTS/PINS` และ `COL_PORTS/PINS` ใน `keyboard_matrix.c` โดยพลการ เนื่องจากผูกกับ Screw Terminal บน Hardware
+    - การกำหนดขา (Hardware Mapping) ต้องตรงกับ `PINOUT.md` เสมอ
+2. **STM32F7 Audio Standards:**
+    - ต้องใช้ **Signed int16_t** สำหรับ Audio Buffer เพื่อให้ตรงกับมาตรฐาน I2S ของ PCM5102A
+    - ต้องเปิดใช้งาน **PLLI2S** ใน SystemClock_Config เสมอ
+3. **UI & Touch:**
+    - ข้อความที่แสดงบนจอต้องเป็น **ตัวพิมพ์ใหญ่ (UPPERCASE)**
+    - SPI1 Speed ห้ามเกิน 13MHz หากต้องการใช้งาน Touchscreen ให้เสถียร
 
 ---
 
 ## 📅 Roadmap & Progress
-- [x] Phase 1-8: Matrix Discovery & Multi-core (Legacy).
 - [x] Phase 9: **Standalone STM32 Migration**
-    - [x] ย้าย Logic ทั้งหมดจาก ESP32 มาลง STM32F7.
-    - [x] ตั้งค่า Hardware SPI1 พร้อมความเร็ว 27MHz.
-    - [x] แก้ไขปัญหา "จอขาว" และ "เส้นกวน" ด้วย Gamma Tuning.
-- [ ] Phase 10: **Advanced Sound & Library (In Progress)**
-    - [x] [dq6] **Touchscreen Integration (XPT2046):** รองรับการกดปุ่มบนหน้าจอ (4-Point Calibrated).
-    - [x] [cxs] **SPI Speed Optimization:** ปรับจูนความเร็วที่ 6.75MHz เพื่อความเสถียรของ Touch.
-    - [x] **Master Volume Control:** ปรับเสียงได้ทั้งผ่าน Touch (Slide) และ VR (ADC PA3).
-    - [ ] [dcr] **Advanced Audio Effects:** เพิ่ม Reverb และ Echo.
-    - [ ] [714] **Library Management:** ระบบบันทึกเพลง (MIDI) ลง Flash/SD.
+- [x] Phase 10: **Advanced Features**
+    - [x] **8x8 Matrix Integration:** เปลี่ยนจาก Direct PE เป็น Matrix 8x8 บน Morpho Inside Pins.
+    - [x] **Velocity & Polyphony:** รองรับน้ำหนักการกดและเล่นคอร์ด (Chord) ได้นุ่มนวล.
+    - [x] **Flash Storage:** ระบบบันทึกเพลงลง Internal Flash (Persistence).
+    - [x] **Multi-Mode Engine:** ระบบสลับเสียง Piano/E-Piano/Strings.
+- [ ] Phase 11: **External I/O & Effects**
+    - [ ] [dcr] **Advanced Audio Effects:** เพิ่ม Reverb และ Echo แบบสมบูรณ์.
+    - [ ] [714] **SD Card Support:** ย้ายการเก็บ Library จาก Flash ไป SD Card เพื่อความจุที่มากขึ้น.
 
 ---
 
 ## 🆘 Troubleshooting (Technical Lessons)
-1. **White Screen:** เกิดจาก SPI FIFO ไม่ได้ถูกตั้งเป็น Byte-level (FRXTH) หรือการส่งข้อมูลเป็น 16-bit โดยไม่ตั้งใจ
-2. **Horizontal Lines:** แก้ไขได้ด้วยการตั้งค่า Gamma Correction (E0, E1) และ Power Control ให้ตรงตามสเปกชิป
-3. **MISO Failure:** หากอ่าน ID ได้ 0x00 หรือ 0xFF ให้ตรวจสอบสาย SDO และการตั้งค่า MspInit ของพอร์ต GPIO
+1. **Siren Sound/Distortion:** เกิดจากส่งข้อมูล Unsigned uint16_t เข้า I2S ที่รอรับ Signed int16_t (แก้โดยใช้ Signed buffer)
+2. **Calibration Loop on Boot:** เกิดจากขา PC13 (Active High) มี Noise ตอนเริ่มจ่ายไฟ (แก้โดยเพิ่ม Startup Delay 500ms)
+3. **Volume Bar Not Moving:** เกิดจาก ADC Noise ไปทับซ้อนค่าจาก Touch (แก้โดยเพิ่ม Threshold Check > 50)
+---

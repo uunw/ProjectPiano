@@ -23,5 +23,6 @@ void Touch_Init(void);
 uint8_t Touch_Read(TouchPoint* p);
 uint8_t Touch_ReadRaw(uint16_t* x, uint16_t* y);
 uint8_t Touch_IsPressed(void);
+uint8_t FastSPI_Transfer(uint8_t data);
 
 #endif
